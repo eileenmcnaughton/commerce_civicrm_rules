@@ -1,0 +1,12 @@
+name = Commerce CiviCRM Rules
+description = Adds rules to in facilitate integrating Drupal Commerce with CiviCRM
+core = 7.x
+dependencies[] = commerce_order
+dependencies[] = civicrm
+dependencies[] = civicrm_entity
+dependencies[] = commerce_checkout
+dependencies[] = entity
+dependencies[] = rules
+dependencies[] = commerce_line_item
+
+files[] = commerce_civicrm_rules.rules.inc

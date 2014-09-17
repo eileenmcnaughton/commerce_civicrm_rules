@@ -1,0 +1,266 @@
+<?php
+
+/**
+ * Add a contribution record.
+ *
+ * @param $params
+ *
+ *  - contact
+ *  - order
+ *  - line_item
+ *  - financial_type_id
+ *  - event_id
+ *  - membership_type_id
+ *  - membership_num_terms
+ */
+function commerce_civicrm_rules_create_contribution_by_line_item($params) {
+  civicrm_initialize();
+  try {
+    $order = $params['commerce_order'];
+    $line_item = $params['commerce_line_item'];
+    $contact = $params['civicrm_contact'];
+    $financial_type_id = $params['financial_type_id'];
+    $membership_type_id = !empty($params['membership_type_id']) ? $params['membership_type_id'] : NULL;
+    $event_id = $params['event_id'];
+    $membership_num_terms = !empty($params['membership_num_terms'])  ? $params['membership_num_terms'] : 1;
+    $membership_id = $participant_id = 0;
+
+    $invoice_id = $line_item->order_id . '-' . $line_item->line_item_id . '_commerce';
+    if (civicrm_api3('Contribution', 'getcount', array('invoice_id' => $invoice_id, 'return' => 'id'))) {
+      //already exists - what to do?
+      return;
+    }
+
+    // TODO: how to handle multiple transactions on one order?
+    $transactions = commerce_payment_transaction_load_multiple(array(), array('order_id' => $order->order_id));
+    $transaction = array_pop($transactions);
+    if (empty($transaction)) {
+      $txn_id = time() . '_' . rand(1000, 9999);
+    }
+    else {
+      $txn_id = $transaction->transaction_id;
+    }
+    if (civicrm_api3('Contribution', 'getcount', array('trxn_id' => $txn_id,))) {
+      $txn_id .= '-' . $line_item->line_item_id;
+    }
+
+    $total = commerce_line_items_total(array($line_item));
+    $order_total = $total['amount'] / 100;
+
+    /* Get the tax total.
+    if (module_exists('commerce_tax')) {
+      $components = $order_wrapper->commerce_order_total->data->value();
+      $tax_total = commerce_tax_total_amount($components['components'], TRUE, commerce_default_currency()) / 100;
+    }
+    */
+
+    if (!empty($order->payment_method)) {
+      $payment_instrument_id = _commerce_civicrm_rules_map_payment_instrument($order->payment_method);
+    }
+    else {
+      $payment_instrument_id = _commerce_civicrm_rules_map_payment_instrument('credit');
+    }
+
+    $notes = commerce_civicrm_rules_create_detail_string($line_item);
+
+    $contribution = civicrm_api3('contribution', 'create', array_merge($params, array(
+      'contact_id' => $contact->id,
+      'receive_date' => 'now',
+      'total_amount' => $order_total,
+      'financial_type_id' => $financial_type_id,
+      'payment_instrument_id' => $payment_instrument_id,
+      'currency' => $total['currency_code'],
+      'non_deductible_amount' => 00.00,
+      'fee_amount' => 00.00,
+      'net_amount' => $order_total,
+      'trxn_id' => $txn_id,
+      'invoice_id' => $invoice_id,
+      'source' => $notes,
+      'contribution_status_id' => commerce_civicrm_rules_map_contribution_status($order->status),
+      'note' => $notes,))
+    );
+    $contribution_id = $contribution['id'];
+    $existing_membership = array();
+    if (!empty($membership_type_id)) {
+      $membership = civicrm_api3('membership', 'get', array(
+        'membership_type_id' => $membership_type_id,
+        'active_only' => TRUE,
+        'contact_id' => $contact->id,
+        'sequential' => TRUE,
+      ));
+      if ($membership['count']) {
+        $existing_membership = array('id' => $membership['values'][0]['id']);
+      }
+      $membership = civicrm_api3('membership', 'create', array_merge($existing_membership, array(
+        'contact_id' => $contact->id,
+        'membership_type_id' => $membership_type_id,
+        'num_terms' => $membership_num_terms,
+        'api.membership_payment.create' => array(
+          'contribution_id' => $contribution_id,
+        ),))
+      );
+      $membership_id = $membership['id'];
+    }
+
+    if (!empty($event_id)) {
+      $participant = civicrm_api3('participant', 'create', array(
+        'event_id' => $event_id,
+        'contact_id' => $contact->id,
+        'status' => commerce_civicrm_rules_map_contribution_status($order->status),
+        'api.participant_payment.create' => array(
+          'contribution_id' => $contribution_id,
+        ),)
+      );
+      $participant_id = $participant['id'];
+    }
+
+    return array('civicrm_contribution_id' => (int) $contribution_id, 'civicrm_participant_id' => $participant_id, 'civicrm_membership_id' => $membership_id);
+  }
+  catch (Exception $e) {
+    watchdog('commerce_civicrm', 'CiviCRM API error: %error', array('%error' => $e->getMessage()), WATCHDOG_ERROR);
+  }
+}
+
+/**
+ * @param $params
+ */
+function commerce_civicrm_rules_update_status_by_line_item($params) {
+  if (!civicrm_intialize()) {
+    return;
+  }
+  drupal_set_message('h');
+  return;
+  $order = $params['commerce_order'];
+  $line_item = $params['commerce_line_item'];
+  $invoice_id = $line_item->order_id . '-' . $line_item->line_item_id . '_commerce';
+  try {
+    $contribution = civicrm_api3('Contribution', 'getsingle', array(
+      'invoice_id' => $invoice_id,
+      'api.membership_payment.get' => 1,
+      'api.participant_payment.get' => 1,
+    ));
+  }
+  catch (Exception $e) {
+    //why doesn't this exist - what to do?  let's call the create fn
+    watchdog('commerce_civicrm_rules', 'retrieve existing contribution failed with ' . $e->getMessage());
+    return commerce_civicrm_rules_create_contribution_by_line_item($params);
+  }
+  $new_status_id = commerce_civicrm_rules_map_contribution_status($order->status);
+  //do we need to update other params? could they have changed?
+  $contribution['contribution_status_id'] = $new_status_id;
+  foreach (array('membership', 'participant') as $entity) {
+    foreach ($contribution['api.' . $entity . '_payment.get']['values'] as $payment) {
+      if ($entity == 'participant') {
+        civicrm_api3('participant', 'create', array('id' => $payment['participant_id'], 'status_id' => $new_status_id));
+      }
+      if ($entity == 'membership') {
+        commerce_civicrm_rules_transition_membership_status($payment['membership_id'], $new_status_id);
+      }
+    }
+  }
+
+}
+
+/**
+ * Update membership based on contribution status.
+ * Let's only act if the contribution has been transitioned to 'Completed' as we don't know what the
+ * right membership action is otherwise e.g what is appropriate if the payment fails or is cancelled
+ *
+ * @param $membership_id
+ * @param $new_contribution_status
+ */
+function commerce_civicrm_rules_transition_membership_status($membership_id, $new_contribution_status) {
+  $contribution_statuses = civicrm_api3('contribution', 'getoptions', array('field' => 'contribution_status_id'));
+  $status = $contribution_statuses[$new_contribution_status];
+  if ($status != 'Completed') {
+    return;
+  }
+
+  $membership = civicrm_api3('membership', 'getsingle', array('id' => $membership_id));
+  unset ($membership['status_id']);
+  $membership['skipStatusCal'] = 0;
+
+  civicrm_api3('membership', 'create', array($membership));
+}
+
+/**
+ * @param $transaction_status
+ *
+ * @return int
+ */
+function commerce_civicrm_rules_map_contribution_status($transaction_status) {
+  $map = array(
+    COMMERCE_PAYMENT_STATUS_SUCCESS => 1,
+    COMMERCE_PAYMENT_STATUS_PENDING => 2,
+    COMMERCE_PAYMENT_STATUS_FAILURE => 4,
+  );
+
+  if (array_key_exists($transaction_status, $map)) {
+    return $map[$transaction_status];
+  }
+  else {
+    watchdog('commerce_civicrm', 'There is no status that maps to %status marking as "Complete"', array('%status' => $transaction_status), WATCHDOG_WARNING);
+  }
+
+  return 1;
+}
+
+/**
+ * Maps a Drupal Commerce payment method to a CiviCRM payment instrument.
+ *
+ * @param string $payment_method
+ *    A Drupal Commerce payment method
+ * @return int
+ *    The CiviCRM id of the payment processor
+ */
+function _commerce_civicrm_rules_map_payment_instrument($payment_method) {
+  $id = 1;
+  // TODO add support for other payment processors.
+  $map = array(
+    'credit' => 1,
+    'commerce_cheque' => 2,
+    'cod'    => 4,
+  );
+
+  if (array_key_exists($payment_method, $map)) {
+    $id = $map[$payment_method];
+  }
+
+  return $id;
+}
+/**
+ * Create string to insert for purchase activity details.
+ */
+function commerce_civicrm_rules_create_detail_string($line_item) {
+  $str = '';
+  $titles = array();
+  $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+  if (in_array($line_item_wrapper->type->value(), commerce_product_line_item_types())) {
+    // Extract a product ID and quantity from the line item.
+    $line_item_sku = $line_item_wrapper->commerce_product->sku->value();
+    $quantity = $line_item_wrapper->quantity->value();
+    $title = $line_item_wrapper->commerce_product->title->value();
+
+    // Update the product's quantity value.
+    if (empty($products[$line_item_sku])) {
+      $products[$line_item_sku] = $quantity;
+      $titles[$title] = $quantity;
+    }
+    else {
+      $products[$line_item_sku] += $quantity;
+      $titles[$title] += $quantity;
+    }
+  }
+
+
+  // Display the product titles and the number purchased.
+  if (!empty($titles)) {
+    $strings = array();
+    foreach ($titles as $title => $quantity) {
+      $strings[] = $title . ' x ' . $quantity;
+    }
+    $str = implode(', ', $strings);
+  }
+
+  return $str;
+}
