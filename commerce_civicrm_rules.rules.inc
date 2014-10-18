@@ -27,12 +27,13 @@ function commerce_civicrm_rules_rules_action_info() {
       ),
       'event_id' => array('type' => 'integer', 'label' => t('Registering for Event ID'), 'optional' => TRUE),
       'membership_type_id' => array('type' => 'integer', 'label' => t('Registering for Membership Type ID'), 'optional' => TRUE),
-      'membership_num_terms' => array('type' => 'integer', 'label' => t('Number of Membership Terms'), 'optional' => TRUE),
+      'quantity' => array('type' => 'integer', 'label' => t('Quantity - number of terms for membership, number of participants for events'), 'optional' => TRUE),
     ),
     'provides' => array(
       'civicrm_contribution_id' => array('type' => 'integer', 'label' => t('CiviCRM Contribution ID')),
       'civicrm_participant_id' => array('type' => 'integer', 'label' => t('CiviCRM Participant ID')),
       'civicrm_membership_id' => array('type' => 'integer', 'label' => t('CiviCRM Membership ID')),
+      'list_civicrm_participant_id' => array('type' => 'list:integer', 'label' => t('List of Participant IDs')),
     ),
   );
   foreach (commerce_rules_get_custom_fields('contribution') as $fieldname => $field) {
@@ -53,7 +54,10 @@ function commerce_civicrm_rules_rules_action_info() {
 }
 
 /**
- * @param $entity
+ * @param string $entity
+ * @param array $types
+ *
+ * @return
  */
 function commerce_rules_get_custom_fields($entity, $types = array('Integer' => 'integer', 'String' => 'text', 'Date' => 'date')) {
   if (!civicrm_initialize()) {

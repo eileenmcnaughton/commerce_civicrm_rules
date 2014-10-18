@@ -22,8 +22,12 @@ function commerce_civicrm_rules_create_contribution_by_line_item($params) {
     $financial_type_id = $params['financial_type_id'];
     $membership_type_id = !empty($params['membership_type_id']) ? $params['membership_type_id'] : NULL;
     $event_id = $params['event_id'];
-    $membership_num_terms = !empty($params['membership_num_terms'])  ? $params['membership_num_terms'] : 1;
+    // quantity is the number of terms for memberships. For events we assume the only reason for a quantity greater than one is more than one
+    // ticket. We record 2 participant records against the same person in the expectation these might be 'transferred' as required
+    // CiviCRM api is fairly immature WRT line items so we record multiple records rather than a quantity in the line items
+    $quantity = !empty($params['quantity'])  ? $params['quantity'] : 1;
     $membership_id = $participant_id = 0;
+    $participant_ids = array();
 
     $invoice_id = $line_item->order_id . '-' . $line_item->line_item_id . '_commerce';
     if (civicrm_api3('Contribution', 'getcount', array('invoice_id' => $invoice_id, 'return' => 'id'))) {
@@ -94,7 +98,7 @@ function commerce_civicrm_rules_create_contribution_by_line_item($params) {
       $membership = civicrm_api3('membership', 'create', array_merge($existing_membership, array(
         'contact_id' => $contact->id,
         'membership_type_id' => $membership_type_id,
-        'num_terms' => $membership_num_terms,
+        'num_terms' => $quantity,
         'api.membership_payment.create' => array(
           'contribution_id' => $contribution_id,
         ),))
@@ -103,18 +107,32 @@ function commerce_civicrm_rules_create_contribution_by_line_item($params) {
     }
 
     if (!empty($event_id)) {
-      $participant = civicrm_api3('participant', 'create', array(
-        'event_id' => $event_id,
-        'contact_id' => $contact->id,
-        'status' => commerce_civicrm_rules_map_contribution_status($order->status),
-        'api.participant_payment.create' => array(
-          'contribution_id' => $contribution_id,
-        ),)
-      );
-      $participant_id = $participant['id'];
+      $ticket_number = 0;
+      $ticket_number_string = '';
+      while ($ticket_number < $quantity) {
+        if ($quantity > 1) {
+          $ticket_number_string = "#" . ($ticket_number + 1) . " ";
+        }
+        $participant = civicrm_api3('participant', 'create', array(
+          'event_id' => $event_id,
+          'contact_id' => $contact->id,
+          'fee_level' => $ticket_number_string . commerce_civicrm_rules_create_detail_string($line_item, FALSE),
+          'fee_amount' => $order_total / $quantity,
+          'status' => commerce_civicrm_rules_map_contribution_status($order->status),
+          'api.participant_payment.create' => array(
+            'contribution_id' => $contribution_id,
+          ),
+          'registered_by_id' => $participant_id ? $participant_id : NULL,
+        ));
+        if (!$participant_id) {
+          $participant_id = $participant['id'];
+        }
+        $ticket_number ++;
+        $participant_ids[] = $participant['id'];
+      }
     }
 
-    return array('civicrm_contribution_id' => (int) $contribution_id, 'civicrm_participant_id' => $participant_id, 'civicrm_membership_id' => $membership_id);
+    return array('civicrm_contribution_id' => (int) $contribution_id, 'civicrm_participant_id' => $participant_id, 'civicrm_membership_id' => $membership_id, 'list_civicrm_participant_id' => $participant_ids);
   }
   catch (Exception $e) {
     watchdog('commerce_civicrm', 'CiviCRM API error: %error', array('%error' => $e->getMessage()), WATCHDOG_ERROR);
@@ -228,10 +246,17 @@ function _commerce_civicrm_rules_map_payment_instrument($payment_method) {
 
   return $id;
 }
+
 /**
  * Create string to insert for purchase activity details.
+ *
+ * @param $line_item
+ *
+ * @param bool $is_include_quantity
+ *
+ * @return string
  */
-function commerce_civicrm_rules_create_detail_string($line_item) {
+function commerce_civicrm_rules_create_detail_string($line_item, $is_include_quantity = TRUE) {
   $str = '';
   $titles = array();
   $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
@@ -241,14 +266,13 @@ function commerce_civicrm_rules_create_detail_string($line_item) {
     $quantity = $line_item_wrapper->quantity->value();
     $title = $line_item_wrapper->commerce_product->title->value();
 
+    if (!$is_include_quantity) {
+      return $title;
+    }
     // Update the product's quantity value.
     if (empty($products[$line_item_sku])) {
       $products[$line_item_sku] = $quantity;
       $titles[$title] = $quantity;
-    }
-    else {
-      $products[$line_item_sku] += $quantity;
-      $titles[$title] += $quantity;
     }
   }
 
