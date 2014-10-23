@@ -116,6 +116,8 @@ function commerce_civicrm_rules_create_contribution_by_line_item($params) {
         $participant = civicrm_api3('participant', 'create', array(
           'event_id' => $event_id,
           'contact_id' => $contact->id,
+          //@todo remove this & let CiviCRM apply sensible default https://issues.civicrm.org/jira/browse/CRM-15503
+          'role_id' => 1,
           'fee_level' => $ticket_number_string . commerce_civicrm_rules_create_detail_string($line_item, FALSE),
           'fee_amount' => $order_total / $quantity,
           'status' => commerce_civicrm_rules_map_contribution_status($order->status),
