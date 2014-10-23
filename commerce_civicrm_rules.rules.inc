@@ -50,6 +50,34 @@ function commerce_civicrm_rules_rules_action_info() {
       'commerce_line_item' => array('type' => 'commerce_line_item', 'label' => t('Line Item')),
     ),
   );
+  //not strictly a CiviCRM thing but the field is likely to hold a reference to a CiviCRM entity so useful
+  $actions['commerce_civicrm_rules_calculate_request_quantity_with_field'] = array(
+    'group' => t('Commerce CiviCRM Rules'),
+    'label' => t('Calculate Requested Quantity in cart of products with field value'),
+    'parameter' => array(
+      'commerce_order' => array(
+        'label' => t('Order'),
+        'type' => 'commerce_order',
+        'description' => t('The order whose line items should be checked for the product with specified field. If the specified order does not exist, the comparison will act as if it is against a quantity of 0.'),
+      ),
+      'field_name' => array(
+        'label' => t('Field name'),
+        'type' => 'text',
+        'description' => t('The field name to look for'),
+      ),
+      'field_value' => array(
+        'label' => t('Field Value'),
+        'type' => 'unknown',
+        'description' => t('The field value to filter on.'),
+      ),
+    ),
+    'provides' => array(
+      'quantity' => array('label' => t('Quantity in order'),
+      'type' => 'integer',
+      'description' => t('The quantity of specified line items in the order.'),
+    )),
+  );
+
   return $actions;
 }
 

@@ -290,3 +290,29 @@ function commerce_civicrm_rules_create_detail_string($line_item, $is_include_qua
 
   return $str;
 }
+
+/**
+ * @param array $order
+ * @param string $field
+ * @param mixed $value
+ *
+ * @return array
+ */
+function commerce_civicrm_rules_calculate_request_quantity_with_field($order, $field, $value) {
+  $total = 0;
+  try {
+    foreach (entity_metadata_wrapper('commerce_order', $order)->commerce_line_items as $delta => $line_item_wrapper) {
+      if (in_array($line_item_wrapper->type->value(), commerce_product_line_item_types())) {
+        $product = $line_item_wrapper->commerce_product->value();
+        if (!empty($product->$field) && $product->{$field}['und'][0]['value'] == $value) {
+          $total = $total + (float) $line_item_wrapper->quantity->value();
+        }
+      }
+    }
+  }
+
+  catch (Exception $e) {
+    //dpm($e);
+  }
+  return array('quantity' => (int) $total);
+}
