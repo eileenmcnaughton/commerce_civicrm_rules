@@ -145,10 +145,9 @@ function commerce_civicrm_rules_create_contribution_by_line_item($params) {
  * @param $params
  */
 function commerce_civicrm_rules_update_status_by_line_item($params) {
-  if (!civicrm_intialize()) {
+  if (!civicrm_initialize()) {
     return;
   }
-  drupal_set_message('h');
   return;
   $order = $params['commerce_order'];
   $line_item = $params['commerce_line_item'];
@@ -211,6 +210,9 @@ function commerce_civicrm_rules_transition_membership_status($membership_id, $ne
 function commerce_civicrm_rules_map_contribution_status($transaction_status) {
   $map = array(
     COMMERCE_PAYMENT_STATUS_SUCCESS => 1,
+    //@todo status of pending is pretty  unclear
+    //https://drupalcommerce.org/discussions/18985/order-status-after-payment-pending-or-completed
+    // https://drupalcommerce.org/user-guide/checkout-order-status-updates
     COMMERCE_PAYMENT_STATUS_PENDING => 2,
     COMMERCE_PAYMENT_STATUS_FAILURE => 4,
   );
